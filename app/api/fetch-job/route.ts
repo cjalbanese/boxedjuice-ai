@@ -82,6 +82,18 @@ export async function POST(req: NextRequest) {
   }
 }
 
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#\d+;/g, "")
+    .trim();
+}
+
 function processHtml(html: string) {
   // Try to extract from meta description first (works for JS-rendered sites like Ashby)
   const metaDesc =
@@ -89,17 +101,41 @@ function processHtml(html: string) {
     html.match(/<meta[^>]*property="og:description"[^>]*content="([^"]+)"/)?.[1];
 
   if (metaDesc && metaDesc.length > 200) {
-    let text = metaDesc
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&#\d+;/g, "")
-      .trim();
+    let text = decodeEntities(metaDesc);
     if (text.length > 15000) text = text.slice(0, 15000) + "\n\n[truncated]";
     return NextResponse.json({ text });
+  }
+
+  // Try JSON-LD structured data (common on Ashby, Lever, Greenhouse)
+  const jsonLdMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/);
+  if (jsonLdMatch) {
+    try {
+      const ld = JSON.parse(jsonLdMatch[1]);
+      if (ld.description && ld.description.length > 100) {
+        const parts: string[] = [];
+        if (ld.title) parts.push(ld.title);
+        if (ld.hiringOrganization?.name) parts.push(`Company: ${ld.hiringOrganization.name}`);
+        if (ld.jobLocation?.address) {
+          const addr = ld.jobLocation.address;
+          const loc = [addr.addressLocality, addr.addressRegion, addr.addressCountry].filter(Boolean).join(", ");
+          if (loc) parts.push(`Location: ${loc}`);
+        }
+        if (ld.employmentType) parts.push(`Type: ${Array.isArray(ld.employmentType) ? ld.employmentType.join(", ") : ld.employmentType}`);
+        parts.push("");
+        // Strip HTML tags from description (some sites include HTML in JSON-LD)
+        const desc = ld.description
+          .replace(/<\/?(p|br|div|li|ul|ol|h[1-6])[^>]*>/gi, "\n")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\n\s*\n/g, "\n\n")
+          .trim();
+        parts.push(desc);
+        let text = decodeEntities(parts.join("\n"));
+        if (text.length > 15000) text = text.slice(0, 15000) + "\n\n[truncated]";
+        return NextResponse.json({ text });
+      }
+    } catch {
+      // JSON-LD parse failed, fall through
+    }
   }
 
   let text = html
