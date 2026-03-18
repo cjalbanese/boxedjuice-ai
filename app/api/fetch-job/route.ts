@@ -113,5 +113,23 @@ function processHtml(html: string) {
     );
   }
 
+  // Detect JS-rendered pages that returned a shell with no real content
+  const JS_SHELL_PATTERNS = [
+    /you need to enable javascript/i,
+    /please enable javascript/i,
+    /this app requires javascript/i,
+    /javascript is required/i,
+    /loading\.{3}/i,
+    /^\s*loading\s*$/im,
+  ];
+
+  const isJsShell = JS_SHELL_PATTERNS.some((p) => p.test(text)) || text.length < 200;
+  if (isJsShell) {
+    return NextResponse.json(
+      { error: "This page requires JavaScript to load its content. Please copy and paste the job description directly instead." },
+      { status: 422 }
+    );
+  }
+
   return NextResponse.json({ text });
 }
