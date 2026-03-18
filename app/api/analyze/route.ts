@@ -4,6 +4,35 @@ import { checkLimit, consume, getRemaining } from "@/lib/rate-limiter";
 import { CHRIS_RESUME } from "@/lib/chris-resume";
 import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/prompts";
 
+function sanitize(str: string): string {
+  return str
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/javascript:/gi, "")
+    .replace(/on\w+\s*=/gi, "")
+    .trim();
+}
+
+function sanitizeResult(result: Record<string, unknown>): Record<string, unknown> {
+  return {
+    fitScore: Math.round(Math.min(100, Math.max(0, result.fitScore as number))),
+    recruiterSummary: sanitize(result.recruiterSummary as string),
+    strongMatches: (result.strongMatches as { skill: string; evidence: string }[]).map((m) => ({
+      skill: sanitize(m.skill),
+      evidence: sanitize(m.evidence),
+    })),
+    gaps: (result.gaps as { requirement: string; suggestion: string }[]).map((g) => ({
+      requirement: sanitize(g.requirement),
+      suggestion: sanitize(g.suggestion),
+    })),
+    hiddenStrengths: (result.hiddenStrengths as { strength: string; relevance: string }[]).map((h) => ({
+      strength: sanitize(h.strength),
+      relevance: sanitize(h.relevance),
+    })),
+    resumeTweaks: (result.resumeTweaks as string[]).map(sanitize),
+  };
+}
+
 function getIP(req: NextRequest): string {
   return (
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
@@ -95,11 +124,14 @@ export async function POST(req: NextRequest) {
       throw new Error("Claude returned malformed analysis structure");
     }
 
+    // Sanitize all string fields to prevent XSS
+    const sanitized = sanitizeResult(result);
+
     // Consume rate limit only on success
     consume(ip);
 
     return NextResponse.json({
-      result,
+      result: sanitized,
       remaining: getRemaining(ip),
     });
   } catch (error) {
