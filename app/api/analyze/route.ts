@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+
+export const maxDuration = 30;
 import { checkLimit, consume, getRemaining } from "@/lib/rate-limiter";
 import { CHRIS_RESUME } from "@/lib/chris-resume";
 import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/prompts";
