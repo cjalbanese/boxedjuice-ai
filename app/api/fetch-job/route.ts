@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { validateExternalUrl } from "@/lib/url-validator";
+import { validateExternalUrl, validateResolvedIPs } from "@/lib/url-validator";
 
 export async function POST(req: NextRequest) {
   let body: { url?: string };
@@ -17,6 +17,12 @@ export async function POST(req: NextRequest) {
   const validation = validateExternalUrl(url);
   if (!validation.valid || !validation.parsed) {
     return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
+
+  // DNS rebinding protection
+  const dnsCheck = await validateResolvedIPs(validation.parsed.hostname);
+  if (!dnsCheck.valid) {
+    return NextResponse.json({ error: dnsCheck.error }, { status: 400 });
   }
 
   try {

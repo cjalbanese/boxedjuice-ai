@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractText } from "unpdf";
 import mammoth from "mammoth";
-import { validateExternalUrl } from "@/lib/url-validator";
+import { validateExternalUrl, validateResolvedIPs } from "@/lib/url-validator";
 
 // ---------- file parsing ----------
 
@@ -24,10 +24,11 @@ async function fetchGitHubProfile(username: string): Promise<string> {
     "User-Agent": "BoxedJuice/1.0",
   };
 
+  const encoded = encodeURIComponent(username);
   const [userRes, reposRes] = await Promise.all([
-    fetch(`https://api.github.com/users/${username}`, { headers }),
+    fetch(`https://api.github.com/users/${encoded}`, { headers }),
     fetch(
-      `https://api.github.com/users/${username}/repos?sort=stars&per_page=15`,
+      `https://api.github.com/users/${encoded}/repos?sort=stars&per_page=15`,
       { headers }
     ),
   ]);
@@ -223,8 +224,26 @@ function extractGitHubUsername(url: string): string | null {
 
 // ---------- route handler ----------
 
+function checkOrigin(req: NextRequest): boolean {
+  const origin = req.headers.get("origin");
+  if (!origin) return false;
+  try {
+    const host = req.headers.get("host") || "";
+    const url = new URL(origin);
+    // Allow same-origin and common dev setups
+    return url.host === host;
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(req: NextRequest) {
   const contentType = req.headers.get("content-type") || "";
+
+  // CSRF protection for multipart uploads (browsers can send these cross-origin without preflight)
+  if (contentType.includes("multipart/form-data") && !checkOrigin(req)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   // --- File upload ---
   if (contentType.includes("multipart/form-data")) {
@@ -301,8 +320,13 @@ export async function POST(req: NextRequest) {
   // SSRF protection — GitHub API calls are safe (hardcoded host), validate everything else
   if (type !== "github") {
     const validation = validateExternalUrl(url);
-    if (!validation.valid) {
+    if (!validation.valid || !validation.parsed) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
+    // DNS rebinding protection
+    const dnsCheck = await validateResolvedIPs(validation.parsed.hostname);
+    if (!dnsCheck.valid) {
+      return NextResponse.json({ error: dnsCheck.error }, { status: 400 });
     }
   }
 
