@@ -81,6 +81,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Reject junk content that isn't a real job posting
+  if (
+    jobPosting.length < 100 ||
+    !/(responsibilities|requirements|qualifications|experience|about the role|what you.?ll do|who you are|apply|salary|compensation|benefits|skills)/i.test(jobPosting)
+  ) {
+    return NextResponse.json(
+      { error: "This doesn't look like a job description. Please paste the full job posting text." },
+      { status: 400 }
+    );
+  }
+
   const client = new Anthropic();
 
   try {
