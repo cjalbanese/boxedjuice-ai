@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { checkAndConsume, getRemaining } from "@/lib/rate-limiter";
+import { checkLimit, consume, getRemaining } from "@/lib/rate-limiter";
 import { CHRIS_RESUME } from "@/lib/chris-resume";
 import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/prompts";
 
@@ -43,15 +43,13 @@ function getIP(req: NextRequest): string {
 
 export async function GET(req: NextRequest) {
   const ip = getIP(req);
-  const remaining = await getRemaining(ip);
-  return NextResponse.json({ remaining });
+  return NextResponse.json({ remaining: getRemaining(ip) });
 }
 
 export async function POST(req: NextRequest) {
   const ip = getIP(req);
 
-  // Atomic check + consume via Upstash Redis
-  const { allowed, remaining } = await checkAndConsume(ip);
+  const { allowed, remaining } = checkLimit(ip);
   if (!allowed) {
     return NextResponse.json(
       { error: "Rate limit exceeded. Try again in 24 hours.", remaining: 0 },
@@ -129,9 +127,12 @@ export async function POST(req: NextRequest) {
     // Sanitize all string fields to prevent XSS
     const sanitized = sanitizeResult(result);
 
+    // Consume rate limit only on success
+    consume(ip);
+
     return NextResponse.json({
       result: sanitized,
-      remaining,
+      remaining: getRemaining(ip),
     });
   } catch (error) {
     console.error("Analysis error:", error);

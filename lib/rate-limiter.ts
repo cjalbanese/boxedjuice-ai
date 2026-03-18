@@ -1,27 +1,42 @@
-import { Ratelimit } from "@upstash/ratelimit";
-import { Redis } from "@upstash/redis";
-
+const WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_REQUESTS = 20;
 
-const redis = Redis.fromEnv();
-
-const ratelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(MAX_REQUESTS, "24 h"),
-  prefix: "boxedjuice",
-});
-
-/** Read-only check — does NOT consume a request. */
-export async function getRemaining(ip: string): Promise<number> {
-  const { remaining } = await ratelimit.getRemaining(ip);
-  return remaining;
+interface RateLimitEntry {
+  count: number;
+  resetAt: number;
 }
 
-/**
- * Check + consume atomically. Returns whether the request is allowed
- * and how many requests remain after this one.
- */
-export async function checkAndConsume(ip: string): Promise<{ allowed: boolean; remaining: number }> {
-  const { success, remaining } = await ratelimit.limit(ip);
-  return { allowed: success, remaining };
+const store = new Map<string, RateLimitEntry>();
+
+function getEntry(ip: string): RateLimitEntry {
+  const now = Date.now();
+  const entry = store.get(ip);
+
+  if (!entry || now >= entry.resetAt) {
+    const fresh = { count: 0, resetAt: now + WINDOW_MS };
+    store.set(ip, fresh);
+    return fresh;
+  }
+
+  return entry;
+}
+
+export function getRemaining(ip: string): number {
+  const entry = getEntry(ip);
+  return Math.max(0, MAX_REQUESTS - entry.count);
+}
+
+export function consume(ip: string): boolean {
+  const entry = getEntry(ip);
+  if (entry.count >= MAX_REQUESTS) return false;
+  entry.count++;
+  return true;
+}
+
+export function checkLimit(ip: string): { allowed: boolean; remaining: number } {
+  const entry = getEntry(ip);
+  return {
+    allowed: entry.count < MAX_REQUESTS,
+    remaining: Math.max(0, MAX_REQUESTS - entry.count),
+  };
 }
