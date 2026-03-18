@@ -113,20 +113,30 @@ function processHtml(html: string) {
     );
   }
 
-  // Detect JS-rendered pages that returned a shell with no real content
-  const JS_SHELL_PATTERNS = [
+  // Detect pages that didn't return actual job content
+  const JUNK_PATTERNS = [
+    // JS-rendered shells
     /you need to enable javascript/i,
     /please enable javascript/i,
     /this app requires javascript/i,
     /javascript is required/i,
-    /loading\.{3}/i,
-    /^\s*loading\s*$/im,
+    // Login / auth walls
+    /sign.?in with google/i,
+    /passwordless sign.?in/i,
+    /log.?in to continue/i,
+    /create an account/i,
+    /sign up to view/i,
   ];
 
-  const isJsShell = JS_SHELL_PATTERNS.some((p) => p.test(text)) || text.length < 200;
-  if (isJsShell) {
+  const isJunk =
+    JUNK_PATTERNS.some((p) => p.test(text)) ||
+    text.length < 200 ||
+    // If the text has no job-related keywords, it's probably not a job posting
+    !/(responsibilities|requirements|qualifications|experience|about the role|what you.?ll do|who you are|apply|salary|compensation|benefits)/i.test(text);
+
+  if (isJunk) {
     return NextResponse.json(
-      { error: "This page requires JavaScript to load its content. Please copy and paste the job description directly instead." },
+      { error: "Couldn't extract a job description from this page — it may require login or JavaScript to load. Please copy and paste the job description directly." },
       { status: 422 }
     );
   }
