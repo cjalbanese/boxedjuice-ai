@@ -81,6 +81,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Validate output shape before returning
+    if (
+      typeof result.fitScore !== "number" ||
+      result.fitScore < 0 ||
+      result.fitScore > 100 ||
+      typeof result.recruiterSummary !== "string" ||
+      !Array.isArray(result.strongMatches) ||
+      !Array.isArray(result.gaps) ||
+      !Array.isArray(result.hiddenStrengths) ||
+      !Array.isArray(result.resumeTweaks)
+    ) {
+      throw new Error("Claude returned malformed analysis structure");
+    }
+
     // Consume rate limit only on success
     consume(ip);
 

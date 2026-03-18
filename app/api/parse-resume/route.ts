@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractText } from "unpdf";
 import mammoth from "mammoth";
+import { validateExternalUrl } from "@/lib/url-validator";
 
 // ---------- file parsing ----------
 
@@ -295,14 +296,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "URL is required" }, { status: 400 });
   }
 
-  try {
-    new URL(url);
-  } catch {
-    return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
+  const type = classifyUrl(url);
+
+  // SSRF protection — GitHub API calls are safe (hardcoded host), validate everything else
+  if (type !== "github") {
+    const validation = validateExternalUrl(url);
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
   }
 
   try {
-    const type = classifyUrl(url);
     let text: string;
 
     if (type === "github") {

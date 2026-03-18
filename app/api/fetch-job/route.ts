@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { validateExternalUrl } from "@/lib/url-validator";
 
 export async function POST(req: NextRequest) {
   let body: { url?: string };
@@ -13,26 +14,53 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "URL is required" }, { status: 400 });
   }
 
-  // Basic URL validation
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-      throw new Error("Invalid protocol");
-    }
-  } catch {
-    return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
+  const validation = validateExternalUrl(url);
+  if (!validation.valid || !validation.parsed) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
   }
 
   try {
-    const res = await fetch(parsed.toString(), {
+    const res = await fetch(validation.parsed.toString(), {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (compatible; BoxedJuice/1.0; job-posting-reader)",
         Accept: "text/html,application/xhtml+xml,text/plain",
       },
       signal: AbortSignal.timeout(10000),
+      redirect: "manual",
     });
+
+    // If redirect, validate the target too
+    if ([301, 302, 307, 308].includes(res.status)) {
+      const location = res.headers.get("location");
+      if (location) {
+        const redirectValidation = validateExternalUrl(
+          new URL(location, validation.parsed).toString()
+        );
+        if (!redirectValidation.valid) {
+          return NextResponse.json(
+            { error: "Redirect to disallowed URL" },
+            { status: 400 }
+          );
+        }
+        // Follow the validated redirect
+        const redirectRes = await fetch(redirectValidation.parsed!.toString(), {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (compatible; BoxedJuice/1.0; job-posting-reader)",
+            Accept: "text/html,application/xhtml+xml,text/plain",
+          },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!redirectRes.ok) {
+          return NextResponse.json(
+            { error: `Failed to fetch (${redirectRes.status})` },
+            { status: 502 }
+          );
+        }
+        return processHtml(await redirectRes.text());
+      }
+    }
 
     if (!res.ok) {
       return NextResponse.json(
@@ -41,48 +69,43 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const html = await res.text();
-
-    // Strip HTML to plain text
-    let text = html
-      // Remove script/style blocks
-      .replace(/<script[\s\S]*?<\/script>/gi, "")
-      .replace(/<style[\s\S]*?<\/style>/gi, "")
-      .replace(/<nav[\s\S]*?<\/nav>/gi, "")
-      .replace(/<footer[\s\S]*?<\/footer>/gi, "")
-      .replace(/<header[\s\S]*?<\/header>/gi, "")
-      // Convert block elements to newlines
-      .replace(/<\/?(div|p|br|h[1-6]|li|tr|section|article)[^>]*>/gi, "\n")
-      // Remove remaining tags
-      .replace(/<[^>]+>/g, " ")
-      // Decode common entities
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&#\d+;/g, "")
-      // Clean up whitespace
-      .replace(/[ \t]+/g, " ")
-      .replace(/\n\s*\n/g, "\n\n")
-      .trim();
-
-    // Truncate to 15k chars
-    if (text.length > 15000) {
-      text = text.slice(0, 15000) + "\n\n[truncated]";
-    }
-
-    if (text.length < 50) {
-      return NextResponse.json(
-        { error: "Could not extract meaningful text from this page. Try pasting the job description directly." },
-        { status: 422 }
-      );
-    }
-
-    return NextResponse.json({ text });
+    return processHtml(await res.text());
   } catch (err) {
     const message = err instanceof Error ? err.message : "Fetch failed";
     return NextResponse.json({ error: message }, { status: 502 });
   }
+}
+
+function processHtml(html: string) {
+  let text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<nav[\s\S]*?<\/nav>/gi, "")
+    .replace(/<footer[\s\S]*?<\/footer>/gi, "")
+    .replace(/<header[\s\S]*?<\/header>/gi, "")
+    .replace(/<\/?(div|p|br|h[1-6]|li|tr|section|article)[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#\d+;/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n/g, "\n\n")
+    .trim();
+
+  if (text.length > 15000) {
+    text = text.slice(0, 15000) + "\n\n[truncated]";
+  }
+
+  if (text.length < 50) {
+    return NextResponse.json(
+      { error: "Could not extract meaningful text from this page. Try pasting the job description directly." },
+      { status: 422 }
+    );
+  }
+
+  return NextResponse.json({ text });
 }
