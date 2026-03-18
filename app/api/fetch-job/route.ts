@@ -83,6 +83,25 @@ export async function POST(req: NextRequest) {
 }
 
 function processHtml(html: string) {
+  // Try to extract from meta description first (works for JS-rendered sites like Ashby)
+  const metaDesc =
+    html.match(/<meta[^>]*name="description"[^>]*content="([^"]+)"/)?.[1] ||
+    html.match(/<meta[^>]*property="og:description"[^>]*content="([^"]+)"/)?.[1];
+
+  if (metaDesc && metaDesc.length > 200) {
+    let text = metaDesc
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&#\d+;/g, "")
+      .trim();
+    if (text.length > 15000) text = text.slice(0, 15000) + "\n\n[truncated]";
+    return NextResponse.json({ text });
+  }
+
   let text = html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
